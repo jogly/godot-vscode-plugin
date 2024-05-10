@@ -1,7 +1,9 @@
 import * as vscode from "vscode";
 import * as path from "path";
 import * as fs from "fs";
+import * as os from "os";
 import { execSync } from "child_process";
+import { get_configuration } from "./vscode_utils";
 
 let projectDir: string | undefined = undefined;
 let projectFile: string | undefined = undefined;
@@ -9,11 +11,11 @@ let projectFile: string | undefined = undefined;
 export async function get_project_dir(): Promise<string | undefined> {
 	let file = "";
 	if (vscode.workspace.workspaceFolders !== undefined) {
-		const files = await vscode.workspace.findFiles("**/project.godot");
+		const files = await vscode.workspace.findFiles("**/project.godot", null);
 
 		if (files.length === 0) {
 			return undefined;
-		} 
+		}
 		if (files.length === 1) {
 			file = files[0].fsPath;
 			if (!fs.existsSync(file) || !fs.statSync(file).isFile()) {
@@ -21,7 +23,7 @@ export async function get_project_dir(): Promise<string | undefined> {
 			}
 		} else if (files.length > 1) {
 			// if multiple project files, pick the top-most one
-			const best = files.reduce((a, b) => a.fsPath.length <= b.fsPath.length ? a : b);
+			const best = files.reduce((a, b) => (a.fsPath.length <= b.fsPath.length ? a : b));
 			if (best) {
 				file = best.fsPath;
 				if (!fs.existsSync(file) || !fs.statSync(file).isFile()) {
@@ -70,14 +72,14 @@ export async function get_project_version(): Promise<string | undefined> {
 	return projectVersion;
 }
 
-export function find_project_file(start: string, depth: number = 20) {
+export function find_project_file(start: string, depth = 20) {
 	// TODO: rename this, it's actually more like "find_parent_project_file"
 	// This function appears to be fast enough, but if speed is ever an issue,
 	// memoizing the result should be straightforward
 	if (start === ".") {
 		if (fs.existsSync("project.godot") && fs.statSync("project.godot").isFile()) {
 			return "project.godot";
-		} 
+		}
 		return null;
 	}
 	const folder = path.dirname(start);
@@ -102,12 +104,16 @@ export async function convert_resource_path_to_uri(resPath: string): Promise<vsc
 
 type VERIFY_STATUS = "SUCCESS" | "WRONG_VERSION" | "INVALID_EXE";
 type VERIFY_RESULT = {
-	status: VERIFY_STATUS,
-	version?: string,
-}
+	status: VERIFY_STATUS;
+	version?: string;
+};
 
 export function verify_godot_version(godotPath: string, expectedVersion: "3" | "4" | string): VERIFY_RESULT {
 	try {
+		if (os.platform() === 'darwin' && godotPath.endsWith('.app')) {
+			godotPath = path.join(godotPath, 'Contents', 'MacOS', 'Godot');
+		}
+
 		const output = execSync(`"${godotPath}" --version`).toString().trim();
 		const pattern = /^(([34])\.([0-9]+)(?:\.[0-9]+)?)/m;
 		const match = output.match(pattern);
@@ -121,4 +127,18 @@ export function verify_godot_version(godotPath: string, expectedVersion: "3" | "
 	} catch {
 		return { status: "INVALID_EXE" };
 	}
+}
+
+export function clean_godot_path(godotPath: string): string {
+	const cleanPath = godotPath.replace(/^"/, "").replace(/"$/, "");
+	const resolvedPath = resolve_workspace_relative_path(cleanPath);
+	return resolvedPath;
+}
+
+function resolve_workspace_relative_path(target: string) {
+	if (!fs.existsSync(target)) {
+		const workspacePath = vscode.workspace.workspaceFolders[0].uri.fsPath;
+		return path.resolve(workspacePath, target);
+	}
+	return target;
 }
